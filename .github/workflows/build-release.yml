@@ -1,0 +1,56 @@
+name: build-release
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Plugin version (dotted numeric, no leading v)"
+        required: true
+        default: "0.3.3"
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: build linux/${{ matrix.goarch }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - goarch: amd64
+            os: ubuntu-latest
+          - goarch: arm64
+            os: ubuntu-24.04-arm
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: Build plugin
+        env:
+          VERSION: ${{ inputs.version }}
+        run: |
+          mkdir -p "build/plugins/linux/${{ matrix.goarch }}"
+          CGO_ENABLED=1 GOOS=linux GOARCH=${{ matrix.goarch }} \
+            go build -buildvcs=false -trimpath \
+            -ldflags "-X main.pluginVersion=${VERSION}" \
+            -buildmode=c-shared \
+            -o "build/plugins/linux/${{ matrix.goarch }}/cliproxyapi-copilot.so" \
+            ./cmd/cliproxyapi-copilot
+
+      - name: Package release
+        env:
+          VERSION: ${{ inputs.version }}
+          GOARCH: ${{ matrix.goarch }}
+        run: scripts/package-release.sh "$VERSION"
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: cliproxyapi-copilot_${{ inputs.version }}_linux_${{ matrix.goarch }}
+          path: dist/*
+          if-no-files-found: error

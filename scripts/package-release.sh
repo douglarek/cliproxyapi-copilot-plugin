@@ -2,9 +2,9 @@
 set -eu
 
 VERSION=${1:-}
+GOARCH=${GOARCH:-amd64}
 PLUGIN_ID="cliproxyapi-copilot"
 GOOS="linux"
-GOARCH="amd64"
 
 case "$VERSION" in
   "" | *[!0-9.]* | .* | *. | *..*)
