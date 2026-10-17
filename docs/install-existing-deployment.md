@@ -3,8 +3,8 @@
 This guide adds the GitHub Copilot plugin to an existing official CLIProxyAPI
 deployment without replacing its configuration, API keys, or existing
 providers. The plugin currently targets CLIProxyAPI `v7.2.118`, ABI version 1,
-on Linux `amd64`. On CLIProxyAPI `v8`, the management center also shows the
-plugin logo and lists Copilot credentials on the quota page.
+on Linux `amd64` and `arm64`. On CLIProxyAPI `v8`, the management center also
+shows the plugin logo and lists Copilot credentials on the quota page.
 
 ## 1. Build the plugin
 
@@ -14,10 +14,19 @@ cd cliproxyapi-copilot-plugin
 make build
 ```
 
+`make build` targets the host architecture. Set `ARCH=amd64` or `ARCH=arm64`
+when the deployment uses a different architecture; that build needs Docker
+emulation such as QEMU binfmt. The examples below use `ARCH` for the
+architecture directory:
+
+```bash
+ARCH=$(uname -m | sed 's/x86_64/amd64/; s/aarch64/arm64/')
+```
+
 The resulting library is:
 
 ```text
-build/plugins/linux/amd64/cliproxyapi-copilot.so
+build/plugins/linux/$ARCH/cliproxyapi-copilot.so
 ```
 
 The filename is significant: CLIProxyAPI derives the plugin ID
@@ -26,7 +35,7 @@ under `plugins.configs` is also renamed.
 
 ## 2. Install the library
 
-CLIProxyAPI searches both `<plugins.dir>/linux/amd64` and `<plugins.dir>`.
+CLIProxyAPI searches both `<plugins.dir>/linux/<arch>` and `<plugins.dir>`.
 Using the platform-specific directory avoids loading an incompatible binary.
 
 ### Native CLIProxyAPI
@@ -34,10 +43,10 @@ Using the platform-specific directory avoids loading an incompatible binary.
 Choose a permanent plugin directory and copy the library:
 
 ```bash
-sudo install -d -m 0755 /opt/cliproxyapi/plugins/linux/amd64
+sudo install -d -m 0755 "/opt/cliproxyapi/plugins/linux/$ARCH"
 sudo install -m 0755 \
-  build/plugins/linux/amd64/cliproxyapi-copilot.so \
-  /opt/cliproxyapi/plugins/linux/amd64/cliproxyapi-copilot.so
+  "build/plugins/linux/$ARCH/cliproxyapi-copilot.so" \
+  "/opt/cliproxyapi/plugins/linux/$ARCH/cliproxyapi-copilot.so"
 ```
 
 The CLIProxyAPI process must be able to read the library. Use a different
@@ -48,10 +57,10 @@ absolute directory if `/opt/cliproxyapi` does not match the deployment.
 Copy the library into a persistent host directory:
 
 ```bash
-install -d -m 0755 /path/to/cliproxyapi/plugins/linux/amd64
+install -d -m 0755 "/path/to/cliproxyapi/plugins/linux/$ARCH"
 install -m 0755 \
-  build/plugins/linux/amd64/cliproxyapi-copilot.so \
-  /path/to/cliproxyapi/plugins/linux/amd64/cliproxyapi-copilot.so
+  "build/plugins/linux/$ARCH/cliproxyapi-copilot.so" \
+  "/path/to/cliproxyapi/plugins/linux/$ARCH/cliproxyapi-copilot.so"
 ```
 
 Mount that directory into the existing container:
@@ -163,8 +172,9 @@ The result should include Copilot models such as `gpt-5.6-sol` and
 
 ## Updating or removing the plugin
 
-Version tags automatically publish marketplace-compatible packages. To update
-from a release, verify the archive against `checksums.txt`, extract
+Version tags automatically publish marketplace-compatible `amd64` and `arm64`
+packages. To update from a release, download the archive for the deployment's
+architecture, verify it against `checksums.txt`, extract
 `cliproxyapi-copilot.so`, replace the installed library, and restart
 CLIProxyAPI.
 

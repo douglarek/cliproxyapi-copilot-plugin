@@ -19,6 +19,13 @@ case "$VERSION" in
     exit 1
     ;;
 esac
+case "$GOARCH" in
+  amd64 | arm64) ;;
+  *)
+    printf 'error: GOARCH must be amd64 or arm64\n' >&2
+    exit 1
+    ;;
+esac
 
 SCRIPT_DIR=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 REPO_DIR=$(CDPATH= cd -- "$SCRIPT_DIR/.." && pwd)

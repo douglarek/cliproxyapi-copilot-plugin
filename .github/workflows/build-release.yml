@@ -26,27 +26,10 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - uses: actions/setup-go@v5
-        with:
-          go-version-file: go.mod
-
-      - name: Build plugin
+      - name: Build and package plugin
         env:
           VERSION: ${{ inputs.version }}
-        run: |
-          mkdir -p "build/plugins/linux/${{ matrix.goarch }}"
-          CGO_ENABLED=1 GOOS=linux GOARCH=${{ matrix.goarch }} \
-            go build -buildvcs=false -trimpath \
-            -ldflags "-X main.pluginVersion=${VERSION}" \
-            -buildmode=c-shared \
-            -o "build/plugins/linux/${{ matrix.goarch }}/cliproxyapi-copilot.so" \
-            ./cmd/cliproxyapi-copilot
-
-      - name: Package release
-        env:
-          VERSION: ${{ inputs.version }}
-          GOARCH: ${{ matrix.goarch }}
-        run: scripts/package-release.sh "$VERSION"
+        run: make package VERSION="$VERSION" ARCH=${{ matrix.goarch }}
 
       - name: Upload artifacts
         uses: actions/upload-artifact@v4

@@ -102,10 +102,12 @@ make test
 make build
 ```
 
-The loader artifact is:
+`make build` targets the host architecture. Set `ARCH=amd64` or `ARCH=arm64`
+to choose one explicitly; building for a different architecture needs Docker
+emulation such as QEMU binfmt. The loader artifact is:
 
 ```text
-build/plugins/linux/amd64/cliproxyapi-copilot.so
+build/plugins/linux/<arch>/cliproxyapi-copilot.so
 ```
 
 `make build-local` exists for development, but a binary built on a newer host
@@ -122,8 +124,9 @@ including the complete configuration block, are in
 
 ## CI and releases
 
-Every push and pull request runs the Go tests and builds a production-compatible
-Linux `amd64` marketplace package. Pushes do not publish releases.
+Every push and pull request runs the Go tests and builds production-compatible
+Linux `amd64` and `arm64` marketplace packages on native GitHub runners. Pushes
+do not publish releases.
 
 To publish a marketplace-compatible release, create and push a dotted numeric
 version tag:
@@ -138,11 +141,13 @@ and publishes:
 
 ```text
 cliproxyapi-copilot_0.3.1_linux_amd64.zip
+cliproxyapi-copilot_0.3.1_linux_arm64.zip
 checksums.txt
 ```
 
-The ZIP contains only `cliproxyapi-copilot.so` at its root, matching the
-official CLIProxyAPI Plugins Store requirements.
+Each ZIP contains only `cliproxyapi-copilot.so` at its root, and
+`checksums.txt` covers both archives, matching the official CLIProxyAPI Plugins
+Store requirements.
 
 ## Isolated deployment
 
