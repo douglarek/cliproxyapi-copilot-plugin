@@ -37,6 +37,13 @@ the official `sdk/pluginabi` and `sdk/pluginapi` contracts. It registers:
 - `AuthProvider`: GitHub device-code OAuth and host-owned credential storage
 - `ModelProvider`: authenticated discovery from the Copilot `/models` endpoint
 - `ProviderExecutor`: non-streaming, SSE streaming, and restricted provider HTTP
+- `QuotaProvider`: Copilot plan and remaining premium, chat, and completion
+  quota for the management center's quota page
+
+Registration also carries the GitHub Copilot logo (Primer Octicons, MIT) for the
+management center. The quota capability is declared through the registration
+JSON, so hosts without plugin quota support (such as `v7.2.118`) ignore it;
+CLIProxyAPI `v8` shows the Copilot credential under the quota page's plugin tab.
 
 The provider packages are intentionally separated:
 
@@ -74,6 +81,10 @@ The GitHub access/refresh material is returned through CLIProxyAPI's
 volume. The short-lived token obtained from
 `https://api.github.com/copilot_internal/v2/token` is cached only in process
 memory, refreshed before expiry, and never deliberately logged.
+
+Quota refreshes from the management center call
+`https://api.github.com/copilot_internal/user` with the stored GitHub token and
+map its quota snapshots to the host's normalized quota format.
 
 Copilot rejects unrecognized `Copilot-Integration-Id` values. Model discovery
 and inference therefore use the recognized VS Code Copilot integration headers
