@@ -1,9 +1,12 @@
 package translate
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"strings"
+
+	sdktranslator "github.com/router-for-me/CLIProxyAPI/v7/sdk/translator"
 )
 
 type responsesClaudeStreamState struct {
@@ -340,6 +343,55 @@ func parseSSEFrame(frame []byte) (event string, data []byte, done bool, err erro
 func claudeSSE(event string, payload map[string]any) []byte {
 	data, _ := json.Marshal(payload)
 	return []byte("event: " + event + "\ndata: " + string(data) + "\n\n")
+}
+
+// responsesToOpenAIStreamState carries the per-stream state of both hops in
+// the Responses→Chat Completions route.
+type responsesToOpenAIStreamState struct {
+	Claude any
+	OpenAI any
+}
+
+// responsesStreamToOpenAI converts one Responses SSE frame into Chat
+// Completions chunks by routing through the Claude schema: the plugin's
+// Responses→Claude converter first, then the builtin Claude→Chat stream
+// translator, which only accepts bare `data:` lines.
+func responsesStreamToOpenAI(ctx context.Context, model string, original, translated, frame []byte, state *any) ([][]byte, error) {
+	if state == nil {
+		return nil, fmt.Errorf("Responses-to-Chat stream translation requires state")
+	}
+	streamState, ok := (*state).(*responsesToOpenAIStreamState)
+	if !ok {
+		streamState = &responsesToOpenAIStreamState{}
+		*state = streamState
+	}
+	claudeFrames, err := responsesStreamToClaude(model, frame, &streamState.Claude)
+	if err != nil {
+		return nil, err
+	}
+	var out [][]byte
+	for _, claudeFrame := range claudeFrames {
+		data, okData := claudeFrameDataLine(claudeFrame)
+		if !okData {
+			continue
+		}
+		out = append(out, registry.TranslateStream(ctx, sdktranslator.FormatClaude, sdktranslator.FormatOpenAI, model, original, translated, data, &streamState.OpenAI)...)
+	}
+	return out, nil
+}
+
+// claudeFrameDataLine converts a full Claude SSE frame into the bare `data:`
+// line form the builtin Claude→Chat translators expect.
+func claudeFrameDataLine(frame []byte) ([]byte, bool) {
+	_, data, done, err := parseSSEFrame(frame)
+	if err != nil || done || len(data) == 0 {
+		return nil, false
+	}
+	out := make([]byte, 0, len(data)+8)
+	out = append(out, "data: "...)
+	out = append(out, data...)
+	out = append(out, '\n', '\n')
+	return out, true
 }
 
 func itemKey(payload map[string]any) string {

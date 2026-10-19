@@ -338,3 +338,121 @@ func TestRequestPreservesTemperatureForNonGPTModels(t *testing.T) {
 		t.Fatalf("expected temperature to be preserved for non-GPT model, got %v: %s", got, out)
 	}
 }
+
+func TestChatPassthroughEmitsBareJSONChunks(t *testing.T) {
+	t.Parallel()
+
+	original := []byte(`{"model":"claude-opus-5.5","messages":[{"role":"user","content":"Say OK"}]}`)
+	translated, err := RequestForEndpointFrom("openai", "claude-opus-5.5", original, true, EndpointChatCompletions)
+	if err != nil {
+		t.Fatalf("translate request: %v", err)
+	}
+	if gjson.GetBytes(translated, "stream").Bool() != true {
+		t.Fatalf("translated request lost stream=true: %s", translated)
+	}
+	frames := [][]byte{
+		[]byte("data: {\"id\":\"c1\",\"object\":\"chat.completion.chunk\",\"choices\":[{\"index\":0,\"delta\":{\"role\":\"assistant\"}}]}\n\n"),
+		[]byte("data: {\"id\":\"c1\",\"object\":\"chat.completion.chunk\",\"choices\":[{\"index\":0,\"delta\":{\"reasoning_text\":\"hmm\"}}]}\n\n"),
+		[]byte("data: {\"id\":\"c1\",\"object\":\"chat.completion.chunk\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"OK\"}}]}\n\n"),
+		[]byte("data: [DONE]\n\n"),
+	}
+	var state any
+	var output strings.Builder
+	for _, frame := range frames {
+		chunks, errTranslate := StreamFromEndpoint(context.Background(), EndpointChatCompletions, "openai", "claude-opus-5.5", original, translated, frame, &state)
+		if errTranslate != nil {
+			t.Fatalf("translate frame %q: %v", frame, errTranslate)
+		}
+		for _, chunk := range chunks {
+			if strings.HasPrefix(string(chunk), "data:") || strings.HasPrefix(string(chunk), "event:") {
+				t.Fatalf("chunk keeps SSE framing, want bare JSON: %q", chunk)
+			}
+			output.Write(chunk)
+			output.WriteString("\n")
+		}
+	}
+	text := output.String()
+	if strings.Contains(text, "[DONE]") {
+		t.Fatalf("upstream terminator leaked to the client: %s", text)
+	}
+	if !strings.Contains(text, `"reasoning_content":"hmm"`) || strings.Contains(text, `"reasoning_text"`) {
+		t.Fatalf("reasoning fields were not mapped for the chat client: %s", text)
+	}
+	if !strings.Contains(text, `"content":"OK"`) {
+		t.Fatalf("text delta missing: %s", text)
+	}
+}
+
+func TestResponsesSSEToChatChunks(t *testing.T) {
+	t.Parallel()
+
+	original := []byte(`{"model":"gpt-6-sol","messages":[{"role":"user","content":"ping"}]}`)
+	translated, err := RequestForEndpointFrom("openai", "gpt-6-sol", original, true, EndpointResponses)
+	if err != nil {
+		t.Fatalf("translate request: %v", err)
+	}
+	if !strings.Contains(string(translated), `"input"`) {
+		t.Fatalf("chat request was not converted to Responses input: %s", translated)
+	}
+	chunks := [][]byte{
+		[]byte("event: response.created\ndata: {\"type\":\"response.created\",\"response\":{\"id\":\"resp_1\",\"model\":\"gpt-6-sol\",\"usage\":{\"input_tokens\":2,\"output_tokens\":0}}}\n\n"),
+		[]byte("event: response.reasoning_text.delta\ndata: {\"type\":\"response.reasoning_text.delta\",\"item_id\":\"r_1\",\"output_index\":0,\"delta\":\"thinking hard\"}\n\n"),
+		[]byte("event: response.output_text.delta\ndata: {\"type\":\"response.output_text.delta\",\"item_id\":\"msg_1\",\"output_index\":1,\"content_index\":0,\"delta\":\"hello\"}\n\n"),
+		[]byte("event: response.completed\ndata: {\"type\":\"response.completed\",\"response\":{\"id\":\"resp_1\",\"status\":\"completed\",\"model\":\"gpt-6-sol\",\"usage\":{\"input_tokens\":2,\"output_tokens\":3}}}\n\n"),
+	}
+	var state any
+	var output strings.Builder
+	for _, chunk := range chunks {
+		frames, errTranslate := StreamFromEndpoint(context.Background(), EndpointResponses, "openai", "gpt-6-sol", original, translated, chunk, &state)
+		if errTranslate != nil {
+			t.Fatalf("translate Responses SSE: %v", errTranslate)
+		}
+		for _, frame := range frames {
+			output.Write(frame)
+		}
+	}
+	text := output.String()
+	for _, needle := range []string{
+		`"object":"chat.completion.chunk"`,
+		`"reasoning_content":"thinking hard"`,
+		`"content":"hello"`,
+		`"finish_reason":"stop"`,
+		`"completion_tokens":3`,
+	} {
+		if !strings.Contains(text, needle) {
+			t.Fatalf("translated chat stream omits %q:\n%s", needle, text)
+		}
+	}
+}
+
+func TestResponsesNonStreamToChat(t *testing.T) {
+	t.Parallel()
+
+	body := []byte(`{"id":"resp_1","object":"response","model":"gpt-6-sol","status":"completed","output":[{"id":"msg_1","type":"message","role":"assistant","content":[{"type":"output_text","text":"answer"}]}],"usage":{"input_tokens":4,"output_tokens":2,"total_tokens":6}}`)
+	out, err := ResponseFromEndpoint(context.Background(), EndpointResponses, "openai", "gpt-6-sol", []byte(`{}`), []byte(`{}`), body)
+	if err != nil {
+		t.Fatalf("translate non-stream response: %v", err)
+	}
+	if got := gjson.GetBytes(out, "object").String(); got != "chat.completion" {
+		t.Fatalf("object = %q, want chat.completion: %s", got, out)
+	}
+	if got := gjson.GetBytes(out, "choices.0.message.content").String(); got != "answer" {
+		t.Fatalf("message content = %q: %s", got, out)
+	}
+}
+
+func TestOpenAIRequestForResponsesEndpointCarriesReasoning(t *testing.T) {
+	t.Parallel()
+
+	original := []byte(`{"model":"gpt-6-sol","messages":[{"role":"user","content":"deep question"}],"reasoning_effort":"high","stream":false}`)
+	out, err := RequestForEndpointFrom("openai", "gpt-6-sol", original, false, EndpointResponses)
+	if err != nil {
+		t.Fatalf("translate request: %v", err)
+	}
+	if got := gjson.GetBytes(out, "reasoning.effort").String(); got != "high" {
+		t.Fatalf("reasoning.effort = %q, want high: %s", got, out)
+	}
+	if gjson.GetBytes(out, "messages").Exists() {
+		t.Fatalf("chat messages leaked into the Responses request: %s", out)
+	}
+}

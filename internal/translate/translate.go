@@ -91,9 +91,29 @@ func StreamFromEndpoint(ctx context.Context, endpoint, destination, model string
 	}
 	to := sdktranslator.FromString(destination)
 	if from == to {
+		if from == sdktranslator.FormatOpenAI {
+			// Chat Completions clients receive chunks verbatim from the host
+			// handler, which adds its own `data: ...` framing; hand over bare
+			// JSON payloads and drop the upstream terminator.
+			return chatCompletionChunk(frame)
+		}
 		return [][]byte{append([]byte(nil), frame...)}, nil
 	}
 	return stream(ctx, from, to, model, original, translated, frame, state)
+}
+
+// chatCompletionChunk converts one Chat Completions SSE frame into the bare
+// JSON payload the host expects as an executor chunk. The `data: [DONE]`
+// terminator is dropped; the host emits its own when the stream closes.
+func chatCompletionChunk(frame []byte) ([][]byte, error) {
+	_, data, done, err := parseSSEFrame(frame)
+	if err != nil {
+		return nil, err
+	}
+	if done || len(data) == 0 {
+		return nil, nil
+	}
+	return [][]byte{append([]byte(nil), data...)}, nil
 }
 
 func ResponsesSSEToClaude(ctx context.Context, model string, original, translated, frame []byte, state *any) ([][]byte, error) {
@@ -106,6 +126,14 @@ func request(from, to sdktranslator.Format, model string, body []byte, stream bo
 	}
 	if from == sdktranslator.FormatClaude && to == sdktranslator.FormatOpenAIResponse {
 		return claudeRequestToResponses(model, body, stream)
+	}
+	if from == sdktranslator.FormatOpenAI && to == sdktranslator.FormatOpenAIResponse {
+		// Chat Completions client against a /responses-only model. The
+		// registry has no direct chat↔responses pair, so route through the
+		// Claude schema: builtin Chat→Claude request translation, then the
+		// plugin's Claude→Responses converter.
+		claudeBody := registry.TranslateRequest(sdktranslator.FormatOpenAI, sdktranslator.FormatClaude, model, body, stream)
+		return claudeRequestToResponses(model, claudeBody, stream)
 	}
 	if from != to && !registry.HasRequestTransformer(from, to) {
 		intermediate, ok := intermediateFormat(from, to)
@@ -133,6 +161,16 @@ func response(ctx context.Context, from, to sdktranslator.Format, model string, 
 	if from == sdktranslator.FormatOpenAIResponse && to == sdktranslator.FormatClaude {
 		return responsesResponseToClaude(model, body)
 	}
+	if from == sdktranslator.FormatOpenAIResponse && to == sdktranslator.FormatOpenAI {
+		// Non-stream counterpart of the /responses-only model route: convert
+		// to a Claude message first, then map it onto a Chat Completions
+		// response (the builtin translator expects recorded event lines).
+		claudeBody, errClaude := responsesResponseToClaude(model, body)
+		if errClaude != nil {
+			return nil, errClaude
+		}
+		return claudeMessageToChatCompletion(model, claudeBody)
+	}
 	if from != to && !registry.HasNonStreamResponseTransformer(to, from) {
 		intermediate, ok := intermediateFormat(to, from)
 		if !ok {
@@ -156,6 +194,21 @@ func response(ctx context.Context, from, to sdktranslator.Format, model string, 
 func stream(ctx context.Context, from, to sdktranslator.Format, model string, original, translated, frame []byte, state *any) ([][]byte, error) {
 	if from == sdktranslator.FormatOpenAIResponse && to == sdktranslator.FormatClaude {
 		return responsesStreamToClaude(model, frame, state)
+	}
+	if from == sdktranslator.FormatOpenAIResponse && to == sdktranslator.FormatOpenAI {
+		// Stream counterpart of the /responses-only model route: Responses
+		// SSE → Claude events (plugin converter) → Chat Completions chunks
+		// (builtin translator, which requires bare `data:` lines).
+		return responsesStreamToOpenAI(ctx, model, original, translated, frame, state)
+	}
+	if from == sdktranslator.FormatClaude && to == sdktranslator.FormatOpenAI {
+		// The builtin Claude→Chat stream translator only accepts bare
+		// `data:` lines; strip event framing from full SSE frames first.
+		data, ok := claudeFrameDataLine(frame)
+		if !ok {
+			return nil, nil
+		}
+		return registry.TranslateStream(ctx, from, to, model, original, translated, data, state), nil
 	}
 	if from != to && !registry.HasStreamResponseTransformer(to, from) {
 		intermediate, ok := intermediateFormat(to, from)

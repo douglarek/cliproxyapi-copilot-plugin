@@ -129,3 +129,58 @@ func TestNormalizeModelPrefixes(t *testing.T) {
 		t.Fatalf("normalized prefixes = %#v", got)
 	}
 }
+
+func TestSelectEndpointForSource(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name    string
+		model   upstreamModel
+		source  string
+		want    string
+		wantErr bool
+	}{
+		{
+			name:   "chat client keeps chat endpoint for claude models",
+			model:  upstreamModel{ID: "claude-opus-5.5", SupportedEndpoints: []string{"/v1/messages", "/chat/completions"}},
+			source: "openai",
+			want:   translate.EndpointChatCompletions,
+		},
+		{
+			name:   "chat client overrides responses preference when chat is available",
+			model:  upstreamModel{ID: "gpt-5.4", SupportedEndpoints: []string{"/responses", "/chat/completions"}},
+			source: "openai",
+			want:   translate.EndpointChatCompletions,
+		},
+		{
+			name:   "chat client keeps responses for responses-only models",
+			model:  upstreamModel{ID: "gpt-6-astra", SupportedEndpoints: []string{"/responses"}},
+			source: "openai",
+			want:   translate.EndpointResponses,
+		},
+		{
+			name:   "responses client keeps the default preference",
+			model:  upstreamModel{ID: "gpt-5.4", SupportedEndpoints: []string{"/responses", "/chat/completions"}},
+			source: "openai-response",
+			want:   translate.EndpointResponses,
+		},
+		{
+			name:   "claude client keeps the default preference",
+			model:  upstreamModel{ID: "claude-opus-5.5", SupportedEndpoints: []string{"/v1/messages", "/chat/completions"}},
+			source: "claude",
+			want:   translate.EndpointChatCompletions,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			endpoint, err := selectEndpointForSource(tt.model, tt.source)
+			if (err != nil) != tt.wantErr {
+				t.Fatalf("selectEndpointForSource error = %v, wantErr %v", err, tt.wantErr)
+			}
+			if endpoint != tt.want {
+				t.Fatalf("endpoint = %q, want %q", endpoint, tt.want)
+			}
+		})
+	}
+}

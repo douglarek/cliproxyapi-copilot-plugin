@@ -336,3 +336,73 @@ func TestExecuteStripsTemperatureForGPTModel(t *testing.T) {
 		t.Fatalf("expected temperature to be preserved for claude-3-7-sonnet, got %v: %s", got, host.request.Body)
 	}
 }
+
+func TestNormalizeRequestFormatAcceptsChatCompletions(t *testing.T) {
+	t.Parallel()
+
+	for value, want := range map[string]string{
+		"openai":           "openai",
+		"chat":             "openai",
+		"chat-completions": "openai",
+		"Chat_Completions": "openai",
+		"claude":           "claude",
+		"openai-response":  "openai-response",
+		"":                 "openai-response",
+		"bogus":            "",
+	} {
+		if got := normalizeRequestFormat(value); got != want {
+			t.Errorf("normalizeRequestFormat(%q) = %q, want %q", value, got, want)
+		}
+	}
+}
+
+func TestExecuteChatSourcePassesThroughChatEndpoint(t *testing.T) {
+	t.Parallel()
+
+	host := &mockExecutorHost{
+		responseBody: []byte(`{"id":"chatcmpl_1","object":"chat.completion","model":"claude-opus-5.5","choices":[{"index":0,"message":{"role":"assistant","content":"OK","reasoning_text":"because"},"finish_reason":"stop"}],"usage":{"prompt_tokens":3,"completion_tokens":2,"total_tokens":5}}`),
+	}
+	svc := New(host)
+	fp := tokenFingerprint("gho_test")
+	svc.tokenEntries["auth-1"] = copilotTokenEntry{
+		Token:       "copilot-test-token",
+		APIBaseURL:  "https://api.githubcopilot.com",
+		ExpiresAt:   time.Now().Add(time.Hour),
+		Fingerprint: fp,
+	}
+	svc.modelEntries["auth-1"] = modelCacheEntry{
+		Fingerprint: fp,
+		APIBaseURL:  "https://api.githubcopilot.com",
+		ExpiresAt:   time.Now().Add(time.Hour),
+		Models: []upstreamModel{
+			{ID: "claude-opus-5.5", Vendor: "Anthropic", SupportedEndpoints: []string{"/v1/messages", "/chat/completions"}},
+		},
+	}
+
+	resp, err := svc.Execute(t.Context(), ExecuteRequest{
+		HostCallbackID: "callback-1",
+		ExecutorRequest: pluginapi.ExecutorRequest{
+			AuthID:       "auth-1",
+			Model:        "claude-opus-5.5",
+			Format:       "openai",
+			SourceFormat: "openai",
+			Payload:      []byte(`{"model":"claude-opus-5.5","messages":[{"role":"user","content":"Say OK"}],"reasoning_effort":"high"}`),
+			StorageJSON:  []byte(`{"type":"copilot","github_access_token":"gho_test"}`),
+		},
+	})
+	if err != nil {
+		t.Fatalf("execute claude-opus-5.5 via chat completions: %v", err)
+	}
+	if host.request.URL != "https://api.githubcopilot.com/chat/completions" {
+		t.Fatalf("request URL = %q, want the chat completions endpoint", host.request.URL)
+	}
+	if got := gjson.GetBytes(host.request.Body, "messages.0.content").String(); got != "Say OK" {
+		t.Fatalf("client messages were not passed through: %s", host.request.Body)
+	}
+	if got := gjson.GetBytes(host.request.Body, "reasoning_effort").String(); got != "high" {
+		t.Fatalf("reasoning_effort = %q, want it preserved: %s", got, host.request.Body)
+	}
+	if got := gjson.GetBytes(resp.Payload, "choices.0.message.reasoning_content").String(); got != "because" {
+		t.Fatalf("reasoning_content = %q, want the mapped reasoning_text: %s", got, resp.Payload)
+	}
+}

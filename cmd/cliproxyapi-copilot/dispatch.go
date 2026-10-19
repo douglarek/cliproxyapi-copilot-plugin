@@ -12,7 +12,7 @@ import (
 )
 
 var pluginService = provider.New(hostTransport{})
-var pluginVersion = "0.3.7"
+var pluginVersion = "0.3.8"
 
 // Quota methods come from newer CLIProxyAPI hosts; the pinned SDK predates them.
 const (
@@ -199,12 +199,19 @@ func pluginRegistration() registration {
 			},
 		},
 		Capabilities: registrationCapability{
-			ModelProvider:         true,
-			AuthProvider:          true,
-			Executor:              true,
-			ExecutorModelScope:    pluginapi.ExecutorModelScopeOAuth,
-			ExecutorInputFormats:  []string{"openai-response", "claude"},
-			ExecutorOutputFormats: []string{"openai-response", "claude"},
+			ModelProvider:      true,
+			AuthProvider:       true,
+			Executor:           true,
+			ExecutorModelScope: pluginapi.ExecutorModelScopeOAuth,
+			// "openai" (Chat Completions) lets chat clients reach the executor
+			// single-hop: the host passes their requests through untouched and
+			// forwards emitted chunks verbatim. Without it the host routes chat
+			// traffic through a Claude round-trip whose stream converter drops
+			// full SSE frames (it only accepts bare `data:` lines), which made
+			// /v1/chat/completions streaming return empty_stream. It stays last
+			// so fallback selection for other client formats is unchanged.
+			ExecutorInputFormats:  []string{"openai-response", "claude", "openai"},
+			ExecutorOutputFormats: []string{"openai-response", "claude", "openai"},
 			QuotaProvider:         true,
 		},
 	}

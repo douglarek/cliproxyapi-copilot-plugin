@@ -158,7 +158,7 @@ func (s *Service) models(ctx context.Context, callbackID, authID string, storage
 	return cleaned, token, nil
 }
 
-func (s *Service) endpointForModel(ctx context.Context, callbackID, authID string, storage authStorage, modelID string) (string, upstreamModel, copilotTokenEntry, error) {
+func (s *Service) endpointForModel(ctx context.Context, callbackID, authID string, storage authStorage, modelID, sourceFormat string) (string, upstreamModel, copilotTokenEntry, error) {
 	modelID = strings.TrimSpace(modelID)
 	if modelID == "" {
 		return "", upstreamModel{}, copilotTokenEntry{}, statusError("invalid_request", "model is required", http.StatusBadRequest)
@@ -173,7 +173,7 @@ func (s *Service) endpointForModel(ctx context.Context, callbackID, authID strin
 	}
 	for _, model := range models {
 		if strings.EqualFold(model.ID, modelID) {
-			endpoint, errEndpoint := selectEndpoint(model)
+			endpoint, errEndpoint := selectEndpointForSource(model, sourceFormat)
 			return endpoint, model, token, errEndpoint
 		}
 	}
@@ -196,6 +196,24 @@ func selectEndpoint(model upstreamModel) (string, error) {
 		}
 	}
 	return "", statusError("unsupported_model_endpoint", "Copilot model exposes no supported chat endpoint", http.StatusUnprocessableEntity)
+}
+
+// selectEndpointForSource adapts the endpoint choice to the client protocol.
+// Chat Completions clients are served by the /chat/completions endpoint
+// whenever the catalog offers it: the request and stream frames then pass
+// through the executor untranslated. Models that only expose /responses keep
+// that endpoint and are translated inside the plugin instead.
+func selectEndpointForSource(model upstreamModel, sourceFormat string) (string, error) {
+	endpoint, errEndpoint := selectEndpoint(model)
+	if errEndpoint != nil || sourceFormat != "openai" {
+		return endpoint, errEndpoint
+	}
+	for _, supported := range normalizeEndpoints(model.SupportedEndpoints) {
+		if supported == translate.EndpointChatCompletions {
+			return translate.EndpointChatCompletions, nil
+		}
+	}
+	return endpoint, nil
 }
 
 func specialResponsesModel(modelID string) (string, bool) {
