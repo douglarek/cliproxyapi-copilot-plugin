@@ -1,5 +1,5 @@
 GO_IMAGE ?= golang:1.26-bookworm
-VERSION ?= 0.3.4
+VERSION ?= 0.3.7
 HOST_ARCH := $(shell uname -m)
 ARCH ?= $(if $(filter aarch64 arm64,$(HOST_ARCH)),arm64,amd64)
 ifeq ($(filter amd64 arm64,$(ARCH)),)

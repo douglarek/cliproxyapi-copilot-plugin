@@ -12,7 +12,7 @@ import (
 )
 
 var pluginService = provider.New(hostTransport{})
-var pluginVersion = "0.3.4"
+var pluginVersion = "0.3.7"
 
 // Quota methods come from newer CLIProxyAPI hosts; the pinned SDK predates them.
 const (
