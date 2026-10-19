@@ -41,6 +41,26 @@ func TestSelectEndpoint(t *testing.T) {
 			want:  translate.EndpointResponses,
 		},
 		{
+			name:  "anthropic prefers native messages",
+			model: upstreamModel{ID: "claude-opus-5", Vendor: "Anthropic", SupportedEndpoints: []string{"/v1/messages", "/chat/completions"}},
+			want:  translate.EndpointMessages,
+		},
+		{
+			name:  "claude family prefers native messages without vendor",
+			model: upstreamModel{ID: "claude-sonnet-5", Capabilities: modelCapabilities{Family: "claude-sonnet"}, SupportedEndpoints: []string{"/v1/messages", "/chat/completions"}},
+			want:  translate.EndpointMessages,
+		},
+		{
+			name:  "anthropic without messages endpoint falls back to chat completions",
+			model: upstreamModel{ID: "claude-haiku-4.5", Vendor: "Anthropic", SupportedEndpoints: []string{"/chat/completions"}},
+			want:  translate.EndpointChatCompletions,
+		},
+		{
+			name:  "non-anthropic keeps responses first",
+			model: upstreamModel{ID: "gpt-5.4", Vendor: "OpenAI", SupportedEndpoints: []string{"/v1/messages", "/chat/completions", "/responses"}},
+			want:  translate.EndpointResponses,
+		},
+		{
 			name:      "unsupported",
 			model:     upstreamModel{ID: "embedding-model", SupportedEndpoints: []string{"/embeddings"}},
 			wantError: true,

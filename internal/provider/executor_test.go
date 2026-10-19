@@ -6,6 +6,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/arthur-sommer-etc/cliproxyapi-copilot-plugin/internal/translate"
 	"github.com/arthur-sommer-etc/cliproxyapi-copilot-plugin/internal/transport"
 	"github.com/router-for-me/CLIProxyAPI/v7/sdk/pluginapi"
 	"github.com/tidwall/gjson"
@@ -27,6 +28,83 @@ func TestCopilotHeadersUseRecognizedIntegration(t *testing.T) {
 		if got := headers.Get(name); got != want {
 			t.Errorf("%s = %q, want %q", name, got, want)
 		}
+	}
+}
+
+func TestCopilotRequestHeadersForMessagesEndpoint(t *testing.T) {
+	t.Parallel()
+
+	thinkingBody := []byte(`{"model":"claude-opus-5","thinking":{"type":"enabled","budget_tokens":4096},"messages":[]}`)
+	headers := copilotRequestHeaders("test-token", true, translate.EndpointMessages, thinkingBody)
+	if got := headers.Get("anthropic-version"); got != anthropicVersionHeader {
+		t.Errorf("anthropic-version = %q, want %q", got, anthropicVersionHeader)
+	}
+	if got := headers.Get("anthropic-beta"); got != anthropicBetaInterleavedThinking {
+		t.Errorf("anthropic-beta = %q, want %q", got, anthropicBetaInterleavedThinking)
+	}
+
+	adaptiveBody := []byte(`{"model":"claude-opus-5","thinking":{"type":"adaptive"},"messages":[]}`)
+	if got := copilotRequestHeaders("test-token", true, translate.EndpointMessages, adaptiveBody).Get("anthropic-beta"); got != "" {
+		t.Errorf("adaptive thinking set anthropic-beta = %q, want empty", got)
+	}
+
+	plainBody := []byte(`{"model":"claude-opus-5","messages":[]}`)
+	headers = copilotRequestHeaders("test-token", false, translate.EndpointMessages, plainBody)
+	if got := headers.Get("anthropic-version"); got != anthropicVersionHeader {
+		t.Errorf("anthropic-version = %q, want %q", got, anthropicVersionHeader)
+	}
+	if got := headers.Get("anthropic-beta"); got != "" {
+		t.Errorf("thinking-free request set anthropic-beta = %q, want empty", got)
+	}
+
+	headers = copilotRequestHeaders("test-token", false, translate.EndpointResponses, []byte(`{"model":"gpt-5.6-sol"}`))
+	if headers.Get("anthropic-version") != "" || headers.Get("anthropic-beta") != "" {
+		t.Fatalf("responses endpoint must not carry anthropic headers: %#v", headers)
+	}
+}
+
+func TestExecuteSendsAnthropicHeadersForMessagesEndpoint(t *testing.T) {
+	t.Parallel()
+
+	host := &mockExecutorHost{}
+	svc := New(host)
+	fp := tokenFingerprint("gho_test")
+	svc.tokenEntries["auth-1"] = copilotTokenEntry{
+		Token:       "copilot-test-token",
+		APIBaseURL:  "https://api.githubcopilot.com",
+		ExpiresAt:   time.Now().Add(time.Hour),
+		Fingerprint: fp,
+	}
+	svc.modelEntries["auth-1"] = modelCacheEntry{
+		Fingerprint: fp,
+		APIBaseURL:  "https://api.githubcopilot.com",
+		ExpiresAt:   time.Now().Add(time.Hour),
+		Models: []upstreamModel{
+			{ID: "claude-opus-5", Vendor: "Anthropic", SupportedEndpoints: []string{"/v1/messages", "/chat/completions"}},
+		},
+	}
+
+	_, err := svc.Execute(t.Context(), ExecuteRequest{
+		HostCallbackID: "callback-1",
+		ExecutorRequest: pluginapi.ExecutorRequest{
+			AuthID:       "auth-1",
+			Model:        "claude-opus-5",
+			SourceFormat: "claude",
+			Payload:      []byte(`{"model":"claude-opus-5","max_tokens":64,"thinking":{"type":"enabled","budget_tokens":4096},"messages":[{"role":"user","content":"hello"}]}`),
+			StorageJSON:  []byte(`{"type":"copilot","github_access_token":"gho_test"}`),
+		},
+	})
+	if err != nil {
+		t.Fatalf("execute claude-opus-5: %v", err)
+	}
+	if host.request.URL != "https://api.githubcopilot.com/v1/messages" {
+		t.Fatalf("request URL = %q, want the native messages endpoint", host.request.URL)
+	}
+	if got := host.request.Headers.Get("anthropic-version"); got != anthropicVersionHeader {
+		t.Errorf("anthropic-version = %q, want %q", got, anthropicVersionHeader)
+	}
+	if got := host.request.Headers.Get("anthropic-beta"); got != anthropicBetaInterleavedThinking {
+		t.Errorf("anthropic-beta = %q, want %q", got, anthropicBetaInterleavedThinking)
 	}
 }
 

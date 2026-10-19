@@ -188,7 +188,7 @@ func selectEndpoint(model upstreamModel) (string, error) {
 		return endpoint, nil
 	}
 	endpoints := normalizeEndpoints(model.SupportedEndpoints)
-	for _, preferred := range []string{translate.EndpointResponses, translate.EndpointChatCompletions, translate.EndpointMessages} {
+	for _, preferred := range endpointPreference(model) {
 		for _, endpoint := range endpoints {
 			if endpoint == preferred {
 				return preferred, nil
@@ -196,6 +196,25 @@ func selectEndpoint(model upstreamModel) (string, error) {
 		}
 	}
 	return "", statusError("unsupported_model_endpoint", "Copilot model exposes no supported chat endpoint", http.StatusUnprocessableEntity)
+}
+
+// endpointPreference orders the Copilot endpoints considered for a model.
+// Anthropic-family models prefer the native /v1/messages endpoint so Claude
+// thinking blocks and signatures survive end to end; the Chat Completions
+// gateway returns Claude reasoning in fields the protocol translators do not
+// carry.
+func endpointPreference(model upstreamModel) []string {
+	if isAnthropicFamily(model) {
+		return []string{translate.EndpointMessages, translate.EndpointResponses, translate.EndpointChatCompletions}
+	}
+	return []string{translate.EndpointResponses, translate.EndpointChatCompletions, translate.EndpointMessages}
+}
+
+func isAnthropicFamily(model upstreamModel) bool {
+	if strings.EqualFold(strings.TrimSpace(model.Vendor), "Anthropic") {
+		return true
+	}
+	return strings.HasPrefix(strings.ToLower(strings.TrimSpace(model.Capabilities.Family)), "claude")
 }
 
 func specialResponsesModel(modelID string) (string, bool) {
