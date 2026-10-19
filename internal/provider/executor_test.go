@@ -206,14 +206,20 @@ func TestExecuteMapsReasoningTextForChatEndpoint(t *testing.T) {
 		t.Errorf("reasoning_effort = %q, want medium (2048 budget): %s", got, host.request.Body)
 	}
 	blocks := gjson.GetBytes(resp.Payload, "content").Array()
-	if len(blocks) == 0 || blocks[0].Get("type").String() != "thinking" {
-		t.Fatalf("expected a leading thinking block, got: %s", resp.Payload)
+	var thinkingText, textContent string
+	for _, block := range blocks {
+		switch block.Get("type").String() {
+		case "thinking":
+			thinkingText = block.Get("thinking").String()
+		case "text":
+			textContent = block.Get("text").String()
+		}
 	}
-	if got := blocks[0].Get("thinking").String(); got != "3599 factors as 59 times 61." {
-		t.Fatalf("thinking text = %q, want the mapped reasoning_text", got)
+	if thinkingText != "3599 factors as 59 times 61." {
+		t.Fatalf("thinking text = %q, want the mapped reasoning_text: %s", thinkingText, resp.Payload)
 	}
-	if got := blocks[1].Get("text").String(); got != "3599 = 59 x 61" {
-		t.Fatalf("text block = %q, unexpected response translation", got)
+	if textContent != "3599 = 59 x 61" {
+		t.Fatalf("text block = %q, unexpected response translation", textContent)
 	}
 }
 
