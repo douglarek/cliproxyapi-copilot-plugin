@@ -237,3 +237,104 @@ data: {"type":"response.completed","response":{"id":"resp_1","status":"completed
 		}
 	}
 }
+
+func TestIsGPTModel(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		model string
+		want  bool
+	}{
+		{model: "gpt-6-astra", want: true},
+		{model: "GPT-6-ASTRA", want: true},
+		{model: "gpt-5.6-sol", want: true},
+		{model: "gpt-5.6-terra", want: true},
+		{model: "gpt-4o", want: true},
+		{model: "gpt-4o-mini", want: true},
+		{model: "gpt-4", want: true},
+		{model: "gpt-3.5-turbo", want: true},
+		{model: "chatgpt-4o-latest", want: true},
+		{model: "openai/gpt-6-astra", want: true},
+		{model: "copilot/gpt-6-astra", want: true},
+		{model: "copilot-gpt-4o", want: true},
+		{model: "claude-3-7-sonnet", want: false},
+		{model: "claude-opus-5", want: false},
+		{model: "gemini-2.0-flash", want: false},
+		{model: "", want: false},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.model, func(t *testing.T) {
+			t.Parallel()
+			if got := IsGPTModel(tc.model); got != tc.want {
+				t.Fatalf("IsGPTModel(%q) = %v, want %v", tc.model, got, tc.want)
+			}
+		})
+	}
+}
+
+func TestRequestStripsTemperatureForGPTModels(t *testing.T) {
+	t.Parallel()
+
+	claudePayload := []byte(`{
+		"model":"ignored",
+		"temperature":0.7,
+		"messages":[{"role":"user","content":"hello"}]
+	}`)
+
+	out, err := RequestForEndpointFrom("claude", "gpt-6-astra", claudePayload, false, EndpointResponses)
+	if err != nil {
+		t.Fatalf("RequestForEndpointFrom claude: %v", err)
+	}
+	if gjson.GetBytes(out, "temperature").Exists() {
+		t.Fatalf("expected temperature to be stripped for gpt-6-astra: %s", out)
+	}
+
+	claudeOut, errClaude := ClaudeToResponses("gpt-6-astra", claudePayload, false)
+	if errClaude != nil {
+		t.Fatalf("ClaudeToResponses: %v", errClaude)
+	}
+	if gjson.GetBytes(claudeOut, "temperature").Exists() {
+		t.Fatalf("expected temperature to be stripped in ClaudeToResponses for gpt-6-astra: %s", claudeOut)
+	}
+
+	responsesPayload := []byte(`{
+		"model":"gpt-6-astra",
+		"temperature":0.7,
+		"input":[{"role":"user","content":[{"type":"input_text","text":"hello"}]}]
+	}`)
+
+	responsesOut, errResponses := RequestForEndpointFrom("openai-response", "gpt-6-astra", responsesPayload, false, EndpointResponses)
+	if errResponses != nil {
+		t.Fatalf("RequestForEndpointFrom responses: %v", errResponses)
+	}
+	if gjson.GetBytes(responsesOut, "temperature").Exists() {
+		t.Fatalf("expected temperature to be stripped for gpt-6-astra in responses: %s", responsesOut)
+	}
+
+	chatCompletionsOut, errCompletions := RequestForEndpoint("gpt-6-astra", responsesPayload, false, EndpointChatCompletions)
+	if errCompletions != nil {
+		t.Fatalf("RequestForEndpoint chat completions: %v", errCompletions)
+	}
+	if gjson.GetBytes(chatCompletionsOut, "temperature").Exists() {
+		t.Fatalf("expected temperature to be stripped for gpt-6-astra in chat completions: %s", chatCompletionsOut)
+	}
+}
+
+func TestRequestPreservesTemperatureForNonGPTModels(t *testing.T) {
+	t.Parallel()
+
+	claudePayload := []byte(`{
+		"model":"ignored",
+		"temperature":0.7,
+		"messages":[{"role":"user","content":"hello"}]
+	}`)
+
+	out, err := RequestForEndpointFrom("claude", "claude-3-7-sonnet", claudePayload, false, EndpointResponses)
+	if err != nil {
+		t.Fatalf("RequestForEndpointFrom claude: %v", err)
+	}
+	if got := gjson.GetBytes(out, "temperature").Float(); got != 0.7 {
+		t.Fatalf("expected temperature to be preserved for non-GPT model, got %v: %s", got, out)
+	}
+}

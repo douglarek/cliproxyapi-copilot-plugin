@@ -200,7 +200,7 @@ func selectEndpoint(model upstreamModel) (string, error) {
 
 func specialResponsesModel(modelID string) (string, bool) {
 	switch strings.ToLower(strings.TrimSpace(modelID)) {
-	case "gpt-5.6-sol", "gpt-5.6-terra":
+	case "gpt-5.6-sol", "gpt-5.6-terra", "gpt-6-astra":
 		return translate.EndpointResponses, true
 	default:
 		return "", false

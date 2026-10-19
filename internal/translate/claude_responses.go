@@ -20,7 +20,15 @@ func claudeRequestToResponses(model string, body []byte, stream bool) ([]byte, e
 		"input":  []any{},
 	}
 	copyField(out, root, "max_tokens", "max_output_tokens")
-	copyField(out, root, "temperature", "temperature")
+	effectiveModel := model
+	if strings.TrimSpace(effectiveModel) == "" || strings.EqualFold(effectiveModel, "ignored") {
+		if m := stringValue(root["model"]); m != "" {
+			effectiveModel = m
+		}
+	}
+	if !IsGPTModel(effectiveModel) {
+		copyField(out, root, "temperature", "temperature")
+	}
 	copyField(out, root, "top_p", "top_p")
 	copyField(out, root, "metadata", "metadata")
 

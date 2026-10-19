@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"strings"
 
 	sdktranslator "github.com/router-for-me/CLIProxyAPI/v7/sdk/translator"
 	"github.com/router-for-me/CLIProxyAPI/v7/sdk/translator/builtin"
@@ -205,13 +206,46 @@ func endpointFormat(endpoint string) (sdktranslator.Format, error) {
 	}
 }
 
+// IsGPTModel reports whether model represents an OpenAI GPT-family model.
+func IsGPTModel(model string) bool {
+	name := strings.ToLower(strings.TrimSpace(model))
+	if name == "" {
+		return false
+	}
+	if idx := strings.LastIndex(name, "/"); idx >= 0 {
+		name = name[idx+1:]
+	}
+	if strings.HasPrefix(name, "gpt") || strings.HasPrefix(name, "chatgpt") {
+		return true
+	}
+	for _, part := range strings.FieldsFunc(name, func(r rune) bool {
+		return r == '-' || r == '_' || r == '.'
+	}) {
+		if part == "gpt" || strings.HasPrefix(part, "gpt") {
+			return true
+		}
+	}
+	return false
+}
+
 func setModelAndStream(body []byte, model string, streamEnabled bool) ([]byte, error) {
 	var value map[string]any
 	if errUnmarshal := json.Unmarshal(body, &value); errUnmarshal != nil {
 		return nil, fmt.Errorf("decode translated request: %w", errUnmarshal)
 	}
-	value["model"] = model
+	targetModel := strings.TrimSpace(model)
+	if targetModel == "" {
+		if m, ok := value["model"].(string); ok {
+			targetModel = strings.TrimSpace(m)
+		}
+	}
+	if targetModel != "" {
+		value["model"] = targetModel
+	}
 	value["stream"] = streamEnabled
+	if IsGPTModel(targetModel) {
+		delete(value, "temperature")
+	}
 	out, errMarshal := json.Marshal(value)
 	if errMarshal != nil {
 		return nil, fmt.Errorf("encode translated request: %w", errMarshal)

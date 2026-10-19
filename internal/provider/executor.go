@@ -1,6 +1,7 @@
 package provider
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"net/http"
@@ -46,7 +47,11 @@ func (s *Service) Execute(ctx context.Context, req ExecuteRequest) (pluginapi.Ex
 	if errEndpoint != nil {
 		return pluginapi.ExecutorResponse{}, errEndpoint
 	}
-	requestBody, errTranslate := translate.RequestForEndpointFrom(sourceFormat, req.Model, req.Payload, false, endpoint)
+	payload := req.Payload
+	if len(bytes.TrimSpace(payload)) == 0 {
+		payload = req.OriginalRequest
+	}
+	requestBody, errTranslate := translate.RequestForEndpointFrom(sourceFormat, req.Model, payload, false, endpoint)
 	if errTranslate != nil {
 		return pluginapi.ExecutorResponse{}, statusError("translation_error", errTranslate.Error(), http.StatusUnprocessableEntity)
 	}
@@ -84,7 +89,11 @@ func (s *Service) ExecuteStream(ctx context.Context, req ExecuteRequest) (http.H
 	if errEndpoint != nil {
 		return nil, errEndpoint
 	}
-	requestBody, errTranslate := translate.RequestForEndpointFrom(sourceFormat, req.Model, req.Payload, true, endpoint)
+	payload := req.Payload
+	if len(bytes.TrimSpace(payload)) == 0 {
+		payload = req.OriginalRequest
+	}
+	requestBody, errTranslate := translate.RequestForEndpointFrom(sourceFormat, req.Model, payload, true, endpoint)
 	if errTranslate != nil {
 		return nil, statusError("translation_error", errTranslate.Error(), http.StatusUnprocessableEntity)
 	}

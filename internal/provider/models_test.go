@@ -36,6 +36,11 @@ func TestSelectEndpoint(t *testing.T) {
 			want:  translate.EndpointResponses,
 		},
 		{
+			name:  "astra forced to responses",
+			model: upstreamModel{ID: "gpt-6-astra"},
+			want:  translate.EndpointResponses,
+		},
+		{
 			name:      "unsupported",
 			model:     upstreamModel{ID: "embedding-model", SupportedEndpoints: []string{"/embeddings"}},
 			wantError: true,
