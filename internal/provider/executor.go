@@ -47,7 +47,7 @@ func (s *Service) Execute(ctx context.Context, req ExecuteRequest) (pluginapi.Ex
 	if errParse != nil {
 		return pluginapi.ExecutorResponse{}, errParse
 	}
-	endpoint, token, errEndpoint := s.endpointForModel(ctx, req.HostCallbackID, req.AuthID, storage, req.Model)
+	endpoint, model, token, errEndpoint := s.endpointForModel(ctx, req.HostCallbackID, req.AuthID, storage, req.Model)
 	if errEndpoint != nil {
 		return pluginapi.ExecutorResponse{}, errEndpoint
 	}
@@ -59,6 +59,7 @@ func (s *Service) Execute(ctx context.Context, req ExecuteRequest) (pluginapi.Ex
 	if errTranslate != nil {
 		return pluginapi.ExecutorResponse{}, statusError("translation_error", errTranslate.Error(), http.StatusUnprocessableEntity)
 	}
+	requestBody = prepareMessagesThinking(requestBody, requestedEffort(sourceFormat, payload), model)
 	resp, token, errDo := s.doModelRequest(ctx, req.HostCallbackID, req.AuthID, storage, token, endpoint, requestBody, false)
 	if errDo != nil {
 		return pluginapi.ExecutorResponse{}, errDo
@@ -89,7 +90,7 @@ func (s *Service) ExecuteStream(ctx context.Context, req ExecuteRequest) (http.H
 	if errParse != nil {
 		return nil, errParse
 	}
-	endpoint, token, errEndpoint := s.endpointForModel(ctx, req.HostCallbackID, req.AuthID, storage, req.Model)
+	endpoint, model, token, errEndpoint := s.endpointForModel(ctx, req.HostCallbackID, req.AuthID, storage, req.Model)
 	if errEndpoint != nil {
 		return nil, errEndpoint
 	}
@@ -101,6 +102,7 @@ func (s *Service) ExecuteStream(ctx context.Context, req ExecuteRequest) (http.H
 	if errTranslate != nil {
 		return nil, statusError("translation_error", errTranslate.Error(), http.StatusUnprocessableEntity)
 	}
+	requestBody = prepareMessagesThinking(requestBody, requestedEffort(sourceFormat, payload), model)
 	upstream, token, errOpen := s.openModelStream(ctx, req.HostCallbackID, req.AuthID, storage, token, endpoint, requestBody)
 	if errOpen != nil {
 		return nil, errOpen
@@ -339,6 +341,46 @@ func copilotRequestHeaders(token string, stream bool, endpoint string, body []by
 		headers.Set("anthropic-beta", anthropicBetaInterleavedThinking)
 	}
 	return headers
+}
+
+// prepareMessagesThinking adapts the translated request for Copilot's
+// Anthropic Messages endpoint, whose newer Claude models reject budget-style
+// thinking and require thinking.type=adaptive with output_config.effort.
+func prepareMessagesThinking(body []byte, effort string, model upstreamModel) []byte {
+	return translate.PrepareMessagesThinking(body, effort, translate.MessagesThinkingOptions{
+		AdaptiveThinking: model.Capabilities.Supports.AdaptiveThinking,
+		ReasoningEfforts: model.Capabilities.Supports.ReasoningEffort,
+	})
+}
+
+// requestedEffort extracts the thinking level the client asked for, in its
+// native protocol's vocabulary, so the adaptive rewrite can preserve it
+// instead of round-tripping through budget token estimates.
+func requestedEffort(sourceFormat string, payload []byte) string {
+	root := gjson.ParseBytes(payload)
+	switch sourceFormat {
+	case "claude":
+		if effort := root.Get("output_config.effort"); effort.Exists() {
+			return effort.String()
+		}
+		if root.Get("thinking.type").String() != "enabled" {
+			return ""
+		}
+		switch budget := root.Get("thinking.budget_tokens").Int(); {
+		case budget <= 0:
+			return ""
+		case budget <= 2048:
+			return "low"
+		case budget <= 8192:
+			return "medium"
+		default:
+			return "high"
+		}
+	case "openai-response":
+		return root.Get("reasoning.effort").String()
+	default:
+		return root.Get("reasoning_effort").String()
+	}
 }
 
 func filterResponseHeaders(headers http.Header) http.Header {

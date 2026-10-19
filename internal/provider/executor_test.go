@@ -80,7 +80,7 @@ func TestExecuteSendsAnthropicHeadersForMessagesEndpoint(t *testing.T) {
 		APIBaseURL:  "https://api.githubcopilot.com",
 		ExpiresAt:   time.Now().Add(time.Hour),
 		Models: []upstreamModel{
-			{ID: "claude-opus-5", Vendor: "Anthropic", SupportedEndpoints: []string{"/v1/messages", "/chat/completions"}},
+			{ID: "claude-opus-5", Vendor: "Anthropic", SupportedEndpoints: []string{"/v1/messages"}},
 		},
 	}
 
@@ -108,6 +108,115 @@ func TestExecuteSendsAnthropicHeadersForMessagesEndpoint(t *testing.T) {
 	}
 }
 
+func TestExecuteAdaptsThinkingForMessagesEndpoint(t *testing.T) {
+	t.Parallel()
+
+	host := &mockExecutorHost{}
+	svc := New(host)
+	fp := tokenFingerprint("gho_test")
+	svc.tokenEntries["auth-1"] = copilotTokenEntry{
+		Token:       "copilot-test-token",
+		APIBaseURL:  "https://api.githubcopilot.com",
+		ExpiresAt:   time.Now().Add(time.Hour),
+		Fingerprint: fp,
+	}
+	svc.modelEntries["auth-1"] = modelCacheEntry{
+		Fingerprint: fp,
+		APIBaseURL:  "https://api.githubcopilot.com",
+		ExpiresAt:   time.Now().Add(time.Hour),
+		Models: []upstreamModel{
+			{
+				ID:                 "claude-opus-5.5",
+				Vendor:             "Anthropic",
+				SupportedEndpoints: []string{"/v1/messages"},
+				Capabilities: modelCapabilities{
+					Supports: modelSupports{AdaptiveThinking: true, ReasoningEffort: []string{"low", "medium", "high", "xhigh", "max"}},
+				},
+			},
+		},
+	}
+
+	_, err := svc.Execute(t.Context(), ExecuteRequest{
+		HostCallbackID: "callback-1",
+		ExecutorRequest: pluginapi.ExecutorRequest{
+			AuthID:       "auth-1",
+			Model:        "claude-opus-5.5",
+			SourceFormat: "claude",
+			Payload:      []byte(`{"model":"claude-opus-5.5","max_tokens":1024,"thinking":{"type":"enabled","budget_tokens":4096},"messages":[{"role":"user","content":"hello"}]}`),
+			StorageJSON:  []byte(`{"type":"copilot","github_access_token":"gho_test"}`),
+		},
+	})
+	if err != nil {
+		t.Fatalf("execute claude-opus-5.5: %v", err)
+	}
+	if got := gjson.GetBytes(host.request.Body, "thinking.type").String(); got != "adaptive" {
+		t.Fatalf("thinking.type = %q, want adaptive: %s", got, host.request.Body)
+	}
+	if gjson.GetBytes(host.request.Body, "thinking.budget_tokens").Exists() {
+		t.Fatalf("budget_tokens survived the adaptive rewrite: %s", host.request.Body)
+	}
+	if got := gjson.GetBytes(host.request.Body, "output_config.effort").String(); got != "medium" {
+		t.Fatalf("output_config.effort = %q, want medium (4096 budget): %s", got, host.request.Body)
+	}
+	if got := host.request.Headers.Get("anthropic-beta"); got != "" {
+		t.Errorf("anthropic-beta = %q, want empty for adaptive thinking", got)
+	}
+}
+
+func TestExecuteMapsReasoningTextForChatEndpoint(t *testing.T) {
+	t.Parallel()
+
+	host := &mockExecutorHost{
+		responseBody: []byte(`{"choices":[{"message":{"role":"assistant","content":"3599 = 59 x 61","reasoning_text":"3599 factors as 59 times 61."}}],"usage":{"completion_tokens":10,"prompt_tokens":5,"total_tokens":15}}`),
+	}
+	svc := New(host)
+	fp := tokenFingerprint("gho_test")
+	svc.tokenEntries["auth-1"] = copilotTokenEntry{
+		Token:       "copilot-test-token",
+		APIBaseURL:  "https://api.githubcopilot.com",
+		ExpiresAt:   time.Now().Add(time.Hour),
+		Fingerprint: fp,
+	}
+	svc.modelEntries["auth-1"] = modelCacheEntry{
+		Fingerprint: fp,
+		APIBaseURL:  "https://api.githubcopilot.com",
+		ExpiresAt:   time.Now().Add(time.Hour),
+		Models: []upstreamModel{
+			{ID: "claude-sonnet-5", Vendor: "Anthropic", SupportedEndpoints: []string{"/v1/messages", "/chat/completions"}},
+		},
+	}
+
+	resp, err := svc.Execute(t.Context(), ExecuteRequest{
+		HostCallbackID: "callback-1",
+		ExecutorRequest: pluginapi.ExecutorRequest{
+			AuthID:       "auth-1",
+			Model:        "claude-sonnet-5",
+			SourceFormat: "claude",
+			Payload:      []byte(`{"model":"claude-sonnet-5","max_tokens":512,"thinking":{"type":"enabled","budget_tokens":2048},"messages":[{"role":"user","content":"Factor 3599."}]}`),
+			StorageJSON:  []byte(`{"type":"copilot","github_access_token":"gho_test"}`),
+		},
+	})
+	if err != nil {
+		t.Fatalf("execute claude-sonnet-5: %v", err)
+	}
+	if host.request.URL != "https://api.githubcopilot.com/chat/completions" {
+		t.Fatalf("request URL = %q, want the chat completions endpoint", host.request.URL)
+	}
+	if got := gjson.GetBytes(host.request.Body, "reasoning_effort").String(); got != "medium" {
+		t.Errorf("reasoning_effort = %q, want medium (2048 budget): %s", got, host.request.Body)
+	}
+	blocks := gjson.GetBytes(resp.Payload, "content").Array()
+	if len(blocks) == 0 || blocks[0].Get("type").String() != "thinking" {
+		t.Fatalf("expected a leading thinking block, got: %s", resp.Payload)
+	}
+	if got := blocks[0].Get("thinking").String(); got != "3599 factors as 59 times 61." {
+		t.Fatalf("thinking text = %q, want the mapped reasoning_text", got)
+	}
+	if got := blocks[1].Get("text").String(); got != "3599 = 59 x 61" {
+		t.Fatalf("text block = %q, unexpected response translation", got)
+	}
+}
+
 func TestCountTokensReturnsClaudeInputTokens(t *testing.T) {
 	t.Parallel()
 
@@ -126,19 +235,24 @@ func TestCountTokensReturnsClaudeInputTokens(t *testing.T) {
 }
 
 type mockExecutorHost struct {
-	request transport.Request
+	request      transport.Request
+	responseBody []byte
 }
 
 func (h *mockExecutorHost) Do(_ context.Context, _ string, req transport.Request) (transport.Response, error) {
 	h.request = req
-	return transport.Response{
-		StatusCode: http.StatusOK,
-		Headers:    http.Header{"Content-Type": []string{"application/json"}},
-		Body: []byte(`{
+	body := h.responseBody
+	if body == nil {
+		body = []byte(`{
 			"id":"resp-1",
 			"status":"completed",
 			"output":[{"type":"message","role":"assistant","content":[{"type":"output_text","text":"hi"}]}]
-		}`),
+		}`)
+	}
+	return transport.Response{
+		StatusCode: http.StatusOK,
+		Headers:    http.Header{"Content-Type": []string{"application/json"}},
+		Body:       body,
 	}, nil
 }
 

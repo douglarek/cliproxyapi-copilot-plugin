@@ -37,6 +37,9 @@ func RequestForEndpointFrom(source, model string, body []byte, stream bool, endp
 	if err != nil {
 		return nil, err
 	}
+	if from == sdktranslator.FormatOpenAIResponse && to != sdktranslator.FormatOpenAIResponse {
+		body = NormalizeResponsesStringInput(body)
+	}
 	var out []byte
 	if from == to {
 		out = append([]byte(nil), body...)
@@ -58,6 +61,12 @@ func ResponseFromEndpoint(ctx context.Context, endpoint, destination, model stri
 	if err != nil {
 		return nil, err
 	}
+	if from == sdktranslator.FormatOpenAI {
+		body, err = NormalizeChatCompletionsResponse(body)
+		if err != nil {
+			return nil, fmt.Errorf("normalize Chat Completions response: %w", err)
+		}
+	}
 	to := sdktranslator.FromString(destination)
 	if from == to {
 		if !json.Valid(body) {
@@ -76,6 +85,9 @@ func StreamFromEndpoint(ctx context.Context, endpoint, destination, model string
 	from, err := endpointFormat(endpoint)
 	if err != nil {
 		return nil, err
+	}
+	if from == sdktranslator.FormatOpenAI {
+		frame = NormalizeChatCompletionsFrame(frame)
 	}
 	to := sdktranslator.FromString(destination)
 	if from == to {

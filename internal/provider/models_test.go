@@ -41,19 +41,14 @@ func TestSelectEndpoint(t *testing.T) {
 			want:  translate.EndpointResponses,
 		},
 		{
-			name:  "anthropic prefers native messages",
-			model: upstreamModel{ID: "claude-opus-5", Vendor: "Anthropic", SupportedEndpoints: []string{"/v1/messages", "/chat/completions"}},
-			want:  translate.EndpointMessages,
-		},
-		{
-			name:  "claude family prefers native messages without vendor",
-			model: upstreamModel{ID: "claude-sonnet-5", Capabilities: modelCapabilities{Family: "claude-sonnet"}, SupportedEndpoints: []string{"/v1/messages", "/chat/completions"}},
-			want:  translate.EndpointMessages,
-		},
-		{
-			name:  "anthropic without messages endpoint falls back to chat completions",
-			model: upstreamModel{ID: "claude-haiku-4.5", Vendor: "Anthropic", SupportedEndpoints: []string{"/chat/completions"}},
+			name:  "anthropic uses chat completions where reasoning is visible",
+			model: upstreamModel{ID: "claude-opus-5.5", Vendor: "Anthropic", SupportedEndpoints: []string{"/v1/messages", "/chat/completions"}},
 			want:  translate.EndpointChatCompletions,
+		},
+		{
+			name:  "anthropic without chat endpoint falls back to messages",
+			model: upstreamModel{ID: "claude-sonnet-5", Vendor: "Anthropic", SupportedEndpoints: []string{"/v1/messages"}},
+			want:  translate.EndpointMessages,
 		},
 		{
 			name:  "non-anthropic keeps responses first",

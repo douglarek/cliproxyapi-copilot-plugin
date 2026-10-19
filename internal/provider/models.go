@@ -158,29 +158,29 @@ func (s *Service) models(ctx context.Context, callbackID, authID string, storage
 	return cleaned, token, nil
 }
 
-func (s *Service) endpointForModel(ctx context.Context, callbackID, authID string, storage authStorage, modelID string) (string, copilotTokenEntry, error) {
+func (s *Service) endpointForModel(ctx context.Context, callbackID, authID string, storage authStorage, modelID string) (string, upstreamModel, copilotTokenEntry, error) {
 	modelID = strings.TrimSpace(modelID)
 	if modelID == "" {
-		return "", copilotTokenEntry{}, statusError("invalid_request", "model is required", http.StatusBadRequest)
+		return "", upstreamModel{}, copilotTokenEntry{}, statusError("invalid_request", "model is required", http.StatusBadRequest)
 	}
 	models, token, errModels := s.models(ctx, callbackID, authID, storage, false)
 	if errModels != nil {
 		if endpoint, ok := specialResponsesModel(modelID); ok {
 			token, errToken := s.copilotToken(ctx, callbackID, authID, storage)
-			return endpoint, token, errToken
+			return endpoint, upstreamModel{}, token, errToken
 		}
-		return "", copilotTokenEntry{}, errModels
+		return "", upstreamModel{}, copilotTokenEntry{}, errModels
 	}
 	for _, model := range models {
 		if strings.EqualFold(model.ID, modelID) {
 			endpoint, errEndpoint := selectEndpoint(model)
-			return endpoint, token, errEndpoint
+			return endpoint, model, token, errEndpoint
 		}
 	}
 	if endpoint, ok := specialResponsesModel(modelID); ok {
-		return endpoint, token, nil
+		return endpoint, upstreamModel{}, token, nil
 	}
-	return "", token, statusError("model_not_found", "Copilot model is not present in the authenticated model catalog", http.StatusNotFound)
+	return "", upstreamModel{}, token, statusError("model_not_found", "Copilot model is not present in the authenticated model catalog", http.StatusNotFound)
 }
 
 func selectEndpoint(model upstreamModel) (string, error) {
@@ -188,7 +188,7 @@ func selectEndpoint(model upstreamModel) (string, error) {
 		return endpoint, nil
 	}
 	endpoints := normalizeEndpoints(model.SupportedEndpoints)
-	for _, preferred := range endpointPreference(model) {
+	for _, preferred := range []string{translate.EndpointResponses, translate.EndpointChatCompletions, translate.EndpointMessages} {
 		for _, endpoint := range endpoints {
 			if endpoint == preferred {
 				return preferred, nil
@@ -196,25 +196,6 @@ func selectEndpoint(model upstreamModel) (string, error) {
 		}
 	}
 	return "", statusError("unsupported_model_endpoint", "Copilot model exposes no supported chat endpoint", http.StatusUnprocessableEntity)
-}
-
-// endpointPreference orders the Copilot endpoints considered for a model.
-// Anthropic-family models prefer the native /v1/messages endpoint so Claude
-// thinking blocks and signatures survive end to end; the Chat Completions
-// gateway returns Claude reasoning in fields the protocol translators do not
-// carry.
-func endpointPreference(model upstreamModel) []string {
-	if isAnthropicFamily(model) {
-		return []string{translate.EndpointMessages, translate.EndpointResponses, translate.EndpointChatCompletions}
-	}
-	return []string{translate.EndpointResponses, translate.EndpointChatCompletions, translate.EndpointMessages}
-}
-
-func isAnthropicFamily(model upstreamModel) bool {
-	if strings.EqualFold(strings.TrimSpace(model.Vendor), "Anthropic") {
-		return true
-	}
-	return strings.HasPrefix(strings.ToLower(strings.TrimSpace(model.Capabilities.Family)), "claude")
 }
 
 func specialResponsesModel(modelID string) (string, bool) {
