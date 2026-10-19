@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"context"
 	"fmt"
-	"log"
 	"net/http"
 	"net/url"
 	"strings"
@@ -217,7 +216,6 @@ func (s *Service) pumpStream(outputID, endpoint, destination, model string, orig
 	emit := func(frame []byte) error {
 		frames, errTranslate := translate.StreamFromEndpoint(ctx, endpoint, destination, model, original, translated, frame, &state)
 		if errTranslate != nil {
-			log.Printf("[copilot-plugin] stream translate error: endpoint=%s destination=%s frame=%q err=%v", endpoint, destination, truncateBytes(frame, 200), errTranslate)
 			return errTranslate
 		}
 		for _, output := range frames {
@@ -225,7 +223,6 @@ func (s *Service) pumpStream(outputID, endpoint, destination, model string, orig
 				continue
 			}
 			if errEmit := s.host.Emit(ctx, outputID, output); errEmit != nil {
-				log.Printf("[copilot-plugin] emit rejected: %v (outputID=%s payload=%q)", errEmit, outputID, truncateBytes(output, 120))
 				return errEmit
 			}
 		}
@@ -356,14 +353,6 @@ func prepareMessagesThinking(body []byte, effort string, model upstreamModel) []
 		AdaptiveThinking: model.Capabilities.Supports.AdaptiveThinking,
 		ReasoningEfforts: model.Capabilities.Supports.ReasoningEffort,
 	})
-}
-
-// truncateBytes limits a byte slice for debug logging.
-func truncateBytes(b []byte, max int) string {
-	if len(b) <= max {
-		return string(b)
-	}
-	return string(b[:max]) + "...(truncated)"
 }
 
 // requestedEffort extracts the thinking level the client asked for, in its
