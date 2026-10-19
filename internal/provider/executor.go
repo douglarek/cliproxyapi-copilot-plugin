@@ -13,6 +13,7 @@ import (
 	"github.com/arthur-sommer-etc/cliproxyapi-copilot-plugin/internal/translate"
 	"github.com/arthur-sommer-etc/cliproxyapi-copilot-plugin/internal/transport"
 	"github.com/router-for-me/CLIProxyAPI/v7/sdk/pluginapi"
+	"github.com/tidwall/gjson"
 )
 
 const (
@@ -21,6 +22,9 @@ const (
 	copilotPluginVersion = "copilot-chat/0.35.0"
 	copilotIntegrationID = "vscode-chat"
 	copilotAPIVersion    = "2025-04-01"
+
+	anthropicVersionHeader           = "2023-06-01"
+	anthropicBetaInterleavedThinking = "interleaved-thinking-2025-05-14"
 )
 
 type ExecuteRequest struct {
@@ -119,7 +123,7 @@ func (s *Service) doModelRequest(ctx context.Context, callbackID, authID string,
 	request := transport.Request{
 		Method:  http.MethodPost,
 		URL:     token.APIBaseURL + endpoint,
-		Headers: copilotHeaders(token.Token, stream),
+		Headers: copilotRequestHeaders(token.Token, stream, endpoint, body),
 		Body:    body,
 	}
 	resp, errDo := s.host.Do(ctx, callbackID, request)
@@ -134,7 +138,7 @@ func (s *Service) doModelRequest(ctx context.Context, callbackID, authID string,
 		}
 		token = refreshed
 		request.URL = token.APIBaseURL + endpoint
-		request.Headers = copilotHeaders(token.Token, stream)
+		request.Headers = copilotRequestHeaders(token.Token, stream, endpoint, body)
 		resp, errDo = s.host.Do(ctx, callbackID, request)
 		if errDo != nil {
 			return transport.Response{}, token, fmt.Errorf("call Copilot model endpoint after token refresh: %w", errDo)
@@ -150,7 +154,7 @@ func (s *Service) openModelStream(ctx context.Context, callbackID, authID string
 	request := transport.Request{
 		Method:  http.MethodPost,
 		URL:     token.APIBaseURL + endpoint,
-		Headers: copilotHeaders(token.Token, true),
+		Headers: copilotRequestHeaders(token.Token, true, endpoint, body),
 		Body:    body,
 	}
 	stream, errOpen := s.host.OpenStream(ctx, callbackID, request)
@@ -166,7 +170,7 @@ func (s *Service) openModelStream(ctx context.Context, callbackID, authID string
 		}
 		token = refreshed
 		request.URL = token.APIBaseURL + endpoint
-		request.Headers = copilotHeaders(token.Token, true)
+		request.Headers = copilotRequestHeaders(token.Token, true, endpoint, body)
 		stream, errOpen = s.host.OpenStream(ctx, callbackID, request)
 		if errOpen != nil {
 			return transport.Stream{}, token, fmt.Errorf("open Copilot model stream after token refresh: %w", errOpen)
@@ -318,6 +322,22 @@ func copilotHeaders(token string, stream bool) http.Header {
 	headers.Set("X-Initiator", "user")
 	headers.Set("X-Interaction-Type", "conversation-edits")
 	headers.Set("X-Request-Id", requestID)
+	return headers
+}
+
+// copilotRequestHeaders builds the headers for a model inference call. The
+// Anthropic Messages endpoint additionally requires an API version header and
+// the interleaved thinking beta whenever the request enables budget thinking.
+func copilotRequestHeaders(token string, stream bool, endpoint string, body []byte) http.Header {
+	headers := copilotHeaders(token, stream)
+	if endpoint != translate.EndpointMessages {
+		return headers
+	}
+	headers.Set("anthropic-version", anthropicVersionHeader)
+	thinking := gjson.GetBytes(body, "thinking")
+	if thinking.Get("budget_tokens").Int() > 0 && thinking.Get("type").String() != "adaptive" {
+		headers.Set("anthropic-beta", anthropicBetaInterleavedThinking)
+	}
 	return headers
 }
 

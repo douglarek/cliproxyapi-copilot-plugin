@@ -58,6 +58,11 @@ The provider packages are intentionally separated:
 Claude input is accepted directly. Chat- or Messages-only Copilot models use
 official built-in translators. Responses-only models use the custom Claude
 bridge; `gpt-5.6-sol` and `gpt-5.6-terra` are always routed to `/responses`.
+Anthropic-family models prefer Copilot's native `/v1/messages` endpoint, which
+keeps Claude thinking blocks and signatures end to end; the Chat Completions
+gateway returns Claude reasoning in fields the protocol translators do not
+carry, so those models only fall back to `/chat/completions` when their catalog
+entry lacks `/v1/messages`.
 Claude token-count requests are estimated locally with the same O200k tokenizer
 approach used by CLIProxyAPI for translated Claude requests.
 Copilot model prefixes can be excluded from discovery to avoid collisions with
